@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fechamento de Venda — Bling</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1115; --card: #171a21; --border: #2a2e38;
+    --text: #e8e9ec; --muted: #9aa0ab; --accent: #4f8cff;
+    --green: #35c56a; --red: #ff5c5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text); padding: 24px;
+  }
+  h1 { font-size: 1.25rem; margin-bottom: 4px; }
+  p.sub { color: var(--muted); margin-top: 0; font-size: 0.9rem; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px; margin-bottom: 18px;
+  }
+  label { display: block; font-size: 0.8rem; color: var(--muted); margin: 10px 0 4px; }
+  input, select {
+    width: 100%; padding: 9px 10px; border-radius: 6px;
+    border: 1px solid var(--border); background: #10131a; color: var(--text);
+    font-size: 0.9rem;
+  }
+  button {
+    margin-top: 14px; padding: 10px 16px; border: none; border-radius: 6px;
+    background: var(--accent); color: white; font-weight: 600; cursor: pointer;
+    font-size: 0.9rem;
+  }
+  button.secondary { background: #2a2e38; }
+  button.export { background: var(--green); }
+  .dropzone {
+    border: 2px dashed var(--border); border-radius: 10px; padding: 30px;
+    text-align: center; color: var(--muted); cursor: pointer;
+  }
+  .dropzone:hover { border-color: var(--accent); color: var(--text); }
+  table { width: 100%; border-collapse: collapse; font-size: 0.76rem; }
+  th, td { padding: 5px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--card); }
+  td input { padding: 4px 4px; width: 56px; font-size: 0.76rem; }
+  .rs { color: var(--muted); font-size: 0.7rem; display: block; margin-top: 2px; }
+  .table-wrap { max-height: 500px; overflow: auto; margin-top: 12px; border: 1px solid var(--border); border-radius: 8px; }
+  .lucro-pos { color: var(--green); font-weight: 700; }
+  .lucro-neg { color: var(--red); font-weight: 700; }
+  .status { font-size: 0.85rem; margin-top: 8px; min-height: 1.2em; }
+  .status.err { color: var(--red); }
+  .status.ok { color: var(--green); }
+  .bulk-row { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-top: 10px; }
+  .bulk-row > div { flex: 1; min-width: 120px; }
+  .hint { font-size: 0.78rem; color: var(--muted); margin-top: 4px; }
+  th.editcol { color: var(--accent); }
+  .resumo { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-top: 14px; }
+  .resumo .item { background: #10131a; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .resumo .item .rlabel { color: var(--muted); font-size: 0.75rem; }
+  .resumo .item .rvalue { font-size: 1.05rem; font-weight: 700; margin-top: 2px; }
+  .resumo .item.destaque { border-color: var(--accent); grid-column: 1 / -1; }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; }
+  .checkbox-row input[type="checkbox"] { width: auto; }
+</style>
+</head>
+<body>
+
+<h1>Fechamento de Venda — Bling</h1>
+<p class="sub">Importa a planilha do Bling, deixa custo unitário / % de NF / imposto / frete / comissão editáveis e calcula o lucro líquido em tempo real</p>
+
+<!-- ETAPA 1: IMPORTAR -->
+<div class="card" id="cardImportar">
+  <h3 style="margin-top:0">1. Importar planilha do Bling</h3>
+  <div class="dropzone" id="dropzone">
+    Clique aqui ou arraste o arquivo (.xls, .xlsx ou .csv) exportado do Bling
+  </div>
+  <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none">
+  <div id="statusImport" class="status"></div>
+</div>
+
+<!-- ETAPA 2: PERCENTUAIS E TABELA -->
+<div class="card" id="cardTabela" style="display:none">
+  <h3 style="margin-top:0">2. Ajustar valores e conferir o lucro líquido</h3>
+
+  <label>Nome do relatório</label>
+  <input id="nomeRelatorio" placeholder="Ex: Relatório de Venda 553" value="Relatório de Venda">
+  <p class="hint" style="margin-top:2px">Esse nome vira o título dentro do Excel e do PDF, e também o nome do arquivo baixado.</p>
+
+  <div class="bulk-row">
+    <div>
+      <label>Valor NF (% do valor total)</label>
+      <input id="bulkNF" type="number" step="0.1" value="100">
+    </div>
+    <div>
+      <label>Imposto (%)</label>
+      <input id="bulkImposto" type="number" step="0.01" value="6">
+    </div>
+    <div>
+      <label>Frete (%)</label>
+      <input id="bulkFrete" type="number" step="0.01" value="5.3">
+    </div>
+    <div>
+      <label>Comissão (%)</label>
+      <input id="bulkComissao" type="number" step="0.01" value="6">
+    </div>
+    <div>
+      <div class="checkbox-row">
+        <input type="checkbox" id="bulkCustoOpAtivo" onchange="toggleCustoOp()">
+        <label style="margin:0">Aplicar custo operacional (%)</label>
+      </div>
+      <input id="bulkCustoOp" type="number" step="0.01" value="0" disabled>
+    </div>
+    <div>
+      <label>Recebedor</label>
+      <input id="bulkRecebedor" type="text" placeholder="Ex: Marcão">
+    </div>
+    <div style="flex:0 0 auto">
+      <button class="secondary" onclick="aplicarEmMassa()">Aplicar a todas as linhas</button>
+    </div>
+  </div>
+  <p class="hint">
+    Imposto, Frete e Comissão incidem sobre o Valor NF (que por padrão é 100% do Valor Total — mude o % se a nota cobrir só parte da venda).
+    O Custo Unitário vem calculado da planilha, mas pode ser editado linha a linha quando o custo do Bling estiver desatualizado — o Preço de Custo total e o Lucro são recalculados automaticamente.
+    O Custo Operacional fica em 0% por padrão; marque a caixa acima se quiser incluir esse desconto no lucro líquido.
+  </p>
+
+  <div class="table-wrap">
+    <table id="tabela">
+      <thead>
+        <tr>
+          <th>Nº Pedido</th><th>Vendedor</th><th>Cliente</th><th class="editcol">Recebedor</th><th>Descrição</th>
+          <th>Qtd</th><th>Valor Total</th><th>Valor Uni.</th>
+          <th class="editcol">Custo Uni.</th><th>Custo Total</th><th>Lucro Total</th>
+          <th class="editcol">NF %</th><th>Valor NF</th>
+          <th class="editcol">Imposto %</th><th>Imposto R$</th>
+          <th class="editcol">Frete %</th><th>Frete R$</th>
+          <th class="editcol">Comissão %</th><th>Comissão R$</th>
+          <th class="editcol">Custo Oper. %</th><th>Custo Oper. R$</th>
+          <th>Lucro Líquido</th>
+        </tr>
+      </thead>
+      <tbody id="tabelaBody"></tbody>
+    </table>
+  </div>
+
+  <div class="resumo">
+    <div class="item"><div class="rlabel">Valor Total Faturado</div><div class="rvalue" id="rValorTotal">R$ 0,00</div></div>
+    <div class="item"><div class="rlabel">Custo Total da Mercadoria</div><div class="rvalue" id="rCustoTotal">R$ 0,00</div></div>
+    <div class="item"><div class="rlabel">Valor Total da Nota Fiscal</div><div class="rvalue" id="rValorNF">R$ 0,00</div></div>
+    <div class="item"><div class="rlabel">Total em Impostos</div><div class="rvalue" id="rImposto">R$ 0,00</div></div>
+    <div class="item"><div class="rlabel">Total em Frete</div><div class="rvalue" id="rFrete">R$ 0,00</div></div>
+    <div class="item"><div class="rlabel">Total em Comissão</div><div class="rvalue" id="rComissao">R$ 0,00</div></div>
+    <div class="item"><div class="rlabel">Total em Custo Operacional</div><div class="rvalue" id="rCustoOp">R$ 0,00</div></div>
+    <div class="item destaque"><div class="rlabel">Lucro Líquido Total</div><div class="rvalue" id="lucroTotal" style="font-size:1.4rem">R$ 0,00</div></div>
+  </div>
+
+  <button class="export" onclick="exportarExcel()">Baixar Excel final</button>
+  <button class="export" onclick="exportarPDF()" style="background:#c0392b">Baixar PDF</button>
+  <div id="statusExport" class="status"></div>
+</div>
+
+<script>
+let linhas = [];
+
+// ---------- IMPORTAR ----------
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+dropzone.onclick = () => fileInput.click();
+dropzone.ondragover = (e) => { e.preventDefault(); dropzone.style.borderColor = 'var(--accent)'; };
+dropzone.ondragleave = () => { dropzone.style.borderColor = 'var(--border)'; };
+dropzone.ondrop = (e) => {
+  e.preventDefault();
+  dropzone.style.borderColor = 'var(--border)';
+  if (e.dataTransfer.files.length) processarArquivo(e.dataTransfer.files[0]);
+};
+fileInput.onchange = (e) => { if (e.target.files.length) processarArquivo(e.target.files[0]); };
+
+function parseNumeroBR(v) {
+  if (typeof v === 'number') return v;
+  if (v === undefined || v === null || v === '') return 0;
+  let s = String(v).trim().replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
+// Quantidade sempre como número inteiro (sem fração)
+function parseQtdBR(v) {
+  return Math.round(parseNumeroBR(v));
+}
+
+function acharColuna(colunas, candidatos) {
+  const normalizar = s => s.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  for (const cand of candidatos) {
+    const alvo = normalizar(cand);
+    const achada = colunas.find(c => normalizar(c) === alvo);
+    if (achada) return achada;
+  }
+  return null;
+}
+
+// ---- Parser de CSV manual (evita a conversão automática de número/acentuação da lib de planilha) ----
+function detectarDelimitadorCSV(texto) {
+  const primeiraLinha = (texto.split(/\r\n|\n/)[0] || '');
+  const pontoVirgula = (primeiraLinha.match(/;/g) || []).length;
+  const virgula = (primeiraLinha.match(/,/g) || []).length;
+  return pontoVirgula >= virgula ? ';' : ',';
+}
+
+function dividirLinhasCSV(texto, delim) {
+  const linhas = [];
+  let linha = [];
+  let campo = '';
+  let dentroAspas = false;
+  for (let i = 0; i < texto.length; i++) {
+    const ch = texto[i];
+    if (dentroAspas) {
+      if (ch === '"') {
+        if (texto[i + 1] === '"') { campo += '"'; i++; }
+        else { dentroAspas = false; }
+      } else {
+        campo += ch;
+      }
+    } else if (ch === '"') {
+      dentroAspas = true;
+    } else if (ch === delim) {
+      linha.push(campo); campo = '';
+    } else if (ch === '\r') {
+      // ignora, a quebra real vem no \n
+    } else if (ch === '\n') {
+      linha.push(campo); campo = '';
+      linhas.push(linha); linha = [];
+    } else {
+      campo += ch;
+    }
+  }
+  if (campo.length || linha.length) { linha.push(campo); linhas.push(linha); }
+  return linhas.filter(l => l.some(c => c.trim() !== ''));
+}
+
+function csvParaObjetos(texto) {
+  if (texto.charCodeAt(0) === 0xFEFF) texto = texto.slice(1); // remove BOM
+  const delim = detectarDelimitadorCSV(texto);
+  const linhas = dividirLinhasCSV(texto, delim);
+  if (!linhas.length) return [];
+  const cabecalho = linhas[0].map(h => h.trim());
+  const objetos = [];
+  for (let i = 1; i < linhas.length; i++) {
+    const obj = {};
+    cabecalho.forEach((h, idx) => { obj[h] = linhas[i][idx] !== undefined ? linhas[i][idx].trim() : ''; });
+    objetos.push(obj);
+  }
+  return objetos;
+}
+
+function processarArquivo(arquivo) {
+  const status = document.getElementById('statusImport');
+  status.textContent = 'Lendo arquivo...'; status.className = 'status';
+  const ehCSV = /\.csv$/i.test(arquivo.name);
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      let json;
+      if (ehCSV) {
+        // lê como texto UTF-8 e faz o parse manualmente — mantém tudo como texto,
+        // sem a lib tentar "adivinhar" número/acentuação e errar
+        json = csvParaObjetos(e.target.result);
+      } else {
+        const dados = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(dados, { type: 'array' });
+        const planilha = workbook.Sheets[workbook.SheetNames[0]];
+        json = XLSX.utils.sheet_to_json(planilha, { defval: '' });
+      }
+      if (!json.length) throw new Error('A planilha está vazia.');
+
+      const colunas = Object.keys(json[0]);
+      const colData = acharColuna(colunas, ['Data']);
+      const colNome = acharColuna(colunas, ['Nome']);
+      const colContato = acharColuna(colunas, ['Nome - Contato', 'Contato']);
+      const colPedido = acharColuna(colunas, ['Número do pedido', 'Numero do pedido', 'Nº do pedido']);
+      const colDescricao = acharColuna(colunas, ['Descrição', 'Descricao']);
+      const colQtd = acharColuna(colunas, ['Quantidade']);
+      const colValorTotal = acharColuna(colunas, ['Valor total']);
+      const colCusto = acharColuna(colunas, ['Preço de custo', 'Preco de custo']);
+
+      if (!colValorTotal || !colQtd) {
+        throw new Error('Não encontrei as colunas "Valor total" e/ou "Quantidade". Confira se é o mesmo modelo exportado do Bling.');
+      }
+      const avisoCusto = !colCusto
+        ? ' Atenção: não encontrei a coluna de custo — os custos ficarão em 0, ajuste manualmente.'
+        : '';
+
+      linhas = json.map(l => {
+        const qtd = parseQtdBR(l[colQtd]);
+        const valorTotal = parseNumeroBR(l[colValorTotal]);
+        const custoTotalOriginal = colCusto ? parseNumeroBR(l[colCusto]) : 0;
+        return {
+          data: colData ? l[colData] : '',
+          nome: colNome ? l[colNome] : '',
+          contato: colContato ? l[colContato] : '',
+          pedido: colPedido ? l[colPedido] : '',
+          descricao: colDescricao ? l[colDescricao] : '',
+          qtd: qtd,
+          valorTotal: valorTotal,
+          custoUnitario: qtd ? custoTotalOriginal / qtd : 0, // editável
+          pctNF: 100, pctImposto: 6, pctFrete: 5.3, pctComissao: 6, pctCustoOp: 0,
+          recebedor: ''
+        };
+      });
+
+      status.textContent = linhas.length + ' linha(s) importada(s).' + avisoCusto;
+      status.className = avisoCusto ? 'status err' : 'status ok';
+      renderizarTabela();
+      document.getElementById('cardTabela').style.display = 'block';
+      document.getElementById('cardTabela').scrollIntoView({ behavior: 'smooth' });
+    } catch (err) {
+      status.textContent = 'Erro ao ler o arquivo: ' + err.message;
+      status.className = 'status err';
+    }
+  };
+  if (ehCSV) reader.readAsText(arquivo, 'UTF-8');
+  else reader.readAsArrayBuffer(arquivo);
+}
+
+// ---------- CÁLCULO ----------
+function calcularLinha(l) {
+  const valorUnitario = l.qtd ? l.valorTotal / l.qtd : 0;
+  const custoTotal = l.custoUnitario * l.qtd;
+  const lucroTotal = l.valorTotal - custoTotal;
+  const valorNF = l.valorTotal * (l.pctNF / 100);
+  const imposto = valorNF * (l.pctImposto / 100);
+  const frete = valorNF * (l.pctFrete / 100);
+  const comissao = valorNF * (l.pctComissao / 100);
+  const custoOperacional = valorNF * (l.pctCustoOp / 100);
+  const lucroLiquido = lucroTotal - imposto - frete - comissao - custoOperacional;
+  return { valorUnitario, custoTotal, lucroTotal, valorNF, imposto, frete, comissao, custoOperacional, lucroLiquido };
+}
+
+function fmt(n) {
+  return (n || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+
+function nomeArquivoSeguro(nome) {
+  const base = (nome || '').trim() || 'relatorio-fechamento';
+  return base.toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove acentos
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function renderizarTabela() {
+  const tbody = document.getElementById('tabelaBody');
+  tbody.innerHTML = '';
+  linhas.forEach((l, i) => {
+    const c = calcularLinha(l);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${l.pedido}</td>
+      <td>${l.nome}</td>
+      <td>${l.contato}</td>
+      <td><input type="text" value="${l.recebedor}" onchange="atualizarTexto(${i},'recebedor',this.value)" style="width:90px"></td>
+      <td>${l.descricao}</td>
+      <td>${l.qtd}</td>
+      <td>${fmt(l.valorTotal)}</td>
+      <td>${fmt(c.valorUnitario)}</td>
+      <td><input type="number" step="0.01" value="${l.custoUnitario.toFixed(2)}" onchange="atualizar(${i},'custoUnitario',this.value)"></td>
+      <td class="custo-total-cell">${fmt(c.custoTotal)}</td>
+      <td class="lucro-total-cell"></td>
+      <td><input type="number" step="0.1" value="${l.pctNF}" onchange="atualizar(${i},'pctNF',this.value)"></td>
+      <td class="valor-nf-cell">${fmt(c.valorNF)}</td>
+      <td><input type="number" step="0.01" value="${l.pctImposto}" onchange="atualizar(${i},'pctImposto',this.value)"></td>
+      <td class="imposto-cell"></td>
+      <td><input type="number" step="0.01" value="${l.pctFrete}" onchange="atualizar(${i},'pctFrete',this.value)"></td>
+      <td class="frete-cell"></td>
+      <td><input type="number" step="0.01" value="${l.pctComissao}" onchange="atualizar(${i},'pctComissao',this.value)"></td>
+      <td class="comissao-cell"></td>
+      <td><input type="number" step="0.01" value="${l.pctCustoOp}" onchange="atualizar(${i},'pctCustoOp',this.value)"></td>
+      <td class="custoop-cell"></td>
+      <td class="lucro-cell"></td>
+    `;
+    tbody.appendChild(tr);
+  });
+  atualizarLucros();
+}
+
+function atualizar(i, campo, valor) {
+  linhas[i][campo] = Number(valor) || 0;
+  atualizarLucros();
+}
+
+function atualizarTexto(i, campo, valor) {
+  linhas[i][campo] = valor;
+}
+
+function atualizarLucros() {
+  let somas = { valorTotal: 0, custoTotal: 0, valorNF: 0, imposto: 0, frete: 0, comissao: 0, custoOperacional: 0, lucroLiquido: 0 };
+  const trs = document.querySelectorAll('#tabelaBody tr');
+  linhas.forEach((l, i) => {
+    const c = calcularLinha(l);
+    somas.valorTotal += l.valorTotal;
+    somas.custoTotal += c.custoTotal;
+    somas.valorNF += c.valorNF;
+    somas.imposto += c.imposto;
+    somas.frete += c.frete;
+    somas.comissao += c.comissao;
+    somas.custoOperacional += c.custoOperacional;
+    somas.lucroLiquido += c.lucroLiquido;
+
+    const tr = trs[i];
+    tr.querySelector('.lucro-total-cell').textContent = fmt(c.lucroTotal);
+    tr.querySelector('.custo-total-cell').textContent = fmt(c.custoTotal);
+    tr.querySelector('.valor-nf-cell').textContent = fmt(c.valorNF);
+    tr.querySelector('.imposto-cell').textContent = fmt(c.imposto);
+    tr.querySelector('.frete-cell').textContent = fmt(c.frete);
+    tr.querySelector('.comissao-cell').textContent = fmt(c.comissao);
+    tr.querySelector('.custoop-cell').textContent = fmt(c.custoOperacional);
+    const cel = tr.querySelector('.lucro-cell');
+    cel.textContent = fmt(c.lucroLiquido);
+    cel.className = 'lucro-cell ' + (c.lucroLiquido >= 0 ? 'lucro-pos' : 'lucro-neg');
+  });
+
+  document.getElementById('rValorTotal').textContent = fmt(somas.valorTotal);
+  document.getElementById('rCustoTotal').textContent = fmt(somas.custoTotal);
+  document.getElementById('rValorNF').textContent = fmt(somas.valorNF);
+  document.getElementById('rImposto').textContent = fmt(somas.imposto);
+  document.getElementById('rFrete').textContent = fmt(somas.frete);
+  document.getElementById('rComissao').textContent = fmt(somas.comissao);
+  document.getElementById('rCustoOp').textContent = fmt(somas.custoOperacional);
+  const totalEl = document.getElementById('lucroTotal');
+  totalEl.textContent = fmt(somas.lucroLiquido);
+  totalEl.className = somas.lucroLiquido >= 0 ? 'lucro-pos' : 'lucro-neg';
+}
+
+function toggleCustoOp() {
+  const ativo = document.getElementById('bulkCustoOpAtivo').checked;
+  document.getElementById('bulkCustoOp').disabled = !ativo;
+  if (!ativo) document.getElementById('bulkCustoOp').value = 0;
+}
+
+function aplicarEmMassa() {
+  const pctNF = Number(document.getElementById('bulkNF').value || 0);
+  const pctImposto = Number(document.getElementById('bulkImposto').value || 0);
+  const pctFrete = Number(document.getElementById('bulkFrete').value || 0);
+  const pctComissao = Number(document.getElementById('bulkComissao').value || 0);
+  const custoOpAtivo = document.getElementById('bulkCustoOpAtivo').checked;
+  const pctCustoOp = custoOpAtivo ? Number(document.getElementById('bulkCustoOp').value || 0) : 0;
+  const recebedor = document.getElementById('bulkRecebedor').value;
+  linhas.forEach(l => {
+    l.pctNF = pctNF;
+    l.pctImposto = pctImposto;
+    l.pctFrete = pctFrete;
+    l.pctComissao = pctComissao;
+    l.pctCustoOp = pctCustoOp;
+    if (recebedor) l.recebedor = recebedor;
+  });
+  renderizarTabela();
+}
+
+// ---------- EXPORTAR ----------
+function exportarExcel() {
+  const status = document.getElementById('statusExport');
+  try {
+    const nomeRelatorio = document.getElementById('nomeRelatorio').value.trim() || 'Relatório de Venda';
+    const cabecalho = ['Data', 'Nome', 'Nome - Contato', 'Recebedor', 'Número do pedido', 'Descrição', 'Quantidade',
+      'Valor total', 'VALOR UNITARIO', 'CUSTO UNI', 'Preço de custo', 'LUCRO TOTAL',
+      'NF %', 'VALOR NF', 'IMPOSTO %', 'IMPOSTO', 'FRETE %', 'FRETE',
+      'COMISSÃO %', 'COMISSÃO', 'CUSTO OPERACIONAL %', 'CUSTO OPERACIONAL', 'LUCRO LIQUIDO'];
+    const linhasSaida = linhas.map(l => {
+      const c = calcularLinha(l);
+      return [
+        l.data, l.nome, l.contato, l.recebedor, l.pedido, l.descricao, l.qtd, l.valorTotal,
+        c.valorUnitario, l.custoUnitario, c.custoTotal, c.lucroTotal,
+        l.pctNF, c.valorNF, l.pctImposto, c.imposto, l.pctFrete, c.frete,
+        l.pctComissao, c.comissao, l.pctCustoOp, c.custoOperacional, c.lucroLiquido
+      ];
+    });
+    const planilha = XLSX.utils.aoa_to_sheet([
+      [nomeRelatorio],
+      ['Gerado em ' + new Date().toLocaleDateString('pt-BR')],
+      [],
+      cabecalho,
+      ...linhasSaida
+    ]);
+    planilha['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: cabecalho.length - 1 } }];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, planilha, 'Fechamento');
+    const nomeArquivo = nomeArquivoSeguro(nomeRelatorio) + '.xlsx';
+    XLSX.writeFile(workbook, nomeArquivo);
+    status.textContent = 'Arquivo baixado: ' + nomeArquivo;
+    status.className = 'status ok';
+  } catch (err) {
+    status.textContent = 'Erro ao exportar: ' + err.message;
+    status.className = 'status err';
+  }
+}
+
+function exportarPDF() {
+  const status = document.getElementById('statusExport');
+  try {
+    const nomeRelatorio = document.getElementById('nomeRelatorio').value.trim() || 'Relatório de Venda';
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+    const larguraPagina = doc.internal.pageSize.getWidth();
+
+    let somas = { valorTotal: 0, custoTotal: 0, valorNF: 0, imposto: 0, frete: 0, comissao: 0, custoOperacional: 0, lucroLiquido: 0 };
+    linhas.forEach(l => {
+      const c = calcularLinha(l);
+      somas.valorTotal += l.valorTotal; somas.custoTotal += c.custoTotal; somas.valorNF += c.valorNF;
+      somas.imposto += c.imposto; somas.frete += c.frete; somas.comissao += c.comissao;
+      somas.custoOperacional += c.custoOperacional; somas.lucroLiquido += c.lucroLiquido;
+    });
+
+    // Título
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.setTextColor(20, 20, 20);
+    doc.text(nomeRelatorio, 30, 34);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(120, 120, 120);
+    doc.text('Gerado em ' + new Date().toLocaleDateString('pt-BR'), 30, 48);
+
+    // Resumo em cartões
+    const resumo = [
+      ['Valor Faturado', fmt(somas.valorTotal)],
+      ['Custo Total', fmt(somas.custoTotal)],
+      ['Valor NF', fmt(somas.valorNF)],
+      ['Impostos', fmt(somas.imposto)],
+      ['Frete', fmt(somas.frete)],
+      ['Comissão', fmt(somas.comissao)],
+      ['Custo Operacional', fmt(somas.custoOperacional)],
+      ['Lucro Líquido', fmt(somas.lucroLiquido)]
+    ];
+    const larguraCard = (larguraPagina - 60) / resumo.length;
+    resumo.forEach((item, i) => {
+      const x = 30 + i * larguraCard;
+      doc.setDrawColor(220, 220, 220);
+      doc.roundedRect(x, 62, larguraCard - 6, 34, 3, 3, 'S');
+      doc.setFontSize(7.5);
+      doc.setTextColor(130, 130, 130);
+      doc.text(item[0], x + 6, 74);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(20, 20, 20);
+      doc.text(item[1], x + 6, 88);
+      doc.setFont('helvetica', 'normal');
+    });
+
+    // Tabela detalhada — larguras somam a área útil da página (paisagem A4)
+    const cabecalho = ['Nº Pedido', 'Vendedor', 'Cliente', 'Recebedor', 'Descrição', 'Qtd', 'Valor Total',
+      'Custo Total', 'Lucro Total', 'Valor NF', 'Imposto', 'Frete', 'Comissão', 'Custo Oper.', 'Lucro Líquido'];
+    const linhasPdf = linhas.map(l => {
+      const c = calcularLinha(l);
+      return [
+        l.pedido, l.nome, l.contato, l.recebedor, l.descricao, l.qtd, fmt(l.valorTotal),
+        fmt(c.custoTotal), fmt(c.lucroTotal), fmt(c.valorNF), fmt(c.imposto),
+        fmt(c.frete), fmt(c.comissao), fmt(c.custoOperacional), fmt(c.lucroLiquido)
+      ];
+    });
+
+    doc.autoTable({
+      head: [cabecalho],
+      body: linhasPdf,
+      startY: 112,
+      theme: 'striped',
+      styles: { fontSize: 7.5, cellPadding: 3.5, font: 'helvetica', textColor: [40, 40, 40], overflow: 'linebreak' },
+      headStyles: { fillColor: [79, 140, 255], textColor: 255, fontSize: 8, fontStyle: 'bold', halign: 'center' },
+      alternateRowStyles: { fillColor: [246, 248, 252] },
+      columnStyles: {
+        0: { cellWidth: 40, halign: 'center' },
+        1: { cellWidth: 44 },
+        2: { cellWidth: 68 },
+        3: { cellWidth: 55 },
+        4: { cellWidth: 'auto' },
+        5: { cellWidth: 26, halign: 'center' },
+        6: { cellWidth: 52, halign: 'right' },
+        7: { cellWidth: 52, halign: 'right' },
+        8: { cellWidth: 52, halign: 'right' },
+        9: { cellWidth: 48, halign: 'right' },
+        10: { cellWidth: 44, halign: 'right' },
+        11: { cellWidth: 40, halign: 'right' },
+        12: { cellWidth: 48, halign: 'right' },
+        13: { cellWidth: 48, halign: 'right' },
+        14: { cellWidth: 55, halign: 'right', fontStyle: 'bold' }
+      },
+      margin: { left: 30, right: 30 },
+      tableWidth: larguraPagina - 60
+    });
+
+    const nomeArquivo = nomeArquivoSeguro(nomeRelatorio) + '.pdf';
+    doc.save(nomeArquivo);
+    status.textContent = 'PDF baixado: ' + nomeArquivo;
+    status.className = 'status ok';
+  } catch (err) {
+    status.textContent = 'Erro ao gerar PDF: ' + err.message;
+    status.className = 'status err';
+  }
+}
+</script>
+</body>
+</html>
